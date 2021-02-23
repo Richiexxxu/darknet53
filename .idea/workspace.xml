@@ -2,8 +2,9 @@
 <project version="4">
   <component name="ChangeListManager">
     <list default="true" id="57f85298-e18f-41be-9341-b9e552a44e8a" name="Default Changelist" comment="">
+      <change afterPath="$PROJECT_DIR$/pretrained_train.py" afterDir="false" />
       <change beforePath="$PROJECT_DIR$/.idea/workspace.xml" beforeDir="false" afterPath="$PROJECT_DIR$/.idea/workspace.xml" afterDir="false" />
-      <change beforePath="$PROJECT_DIR$/predict.py" beforeDir="false" afterPath="$PROJECT_DIR$/predict.py" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/model.py" beforeDir="false" afterPath="$PROJECT_DIR$/model.py" afterDir="false" />
     </list>
     <option name="SHOW_DIALOG" value="false" />
     <option name="HIGHLIGHT_CONFLICTS" value="true" />
@@ -131,6 +132,7 @@
       <updated>1613676819837</updated>
       <workItem from="1613676820984" duration="4141000" />
       <workItem from="1613933425070" duration="5756000" />
+      <workItem from="1614107114911" duration="1296000" />
     </task>
     <servers />
   </component>
@@ -181,6 +183,10 @@
     <state x="776" y="231" key="SettingsEditor/0.0.2560.1400/-1080.-191.1080.1880@0.0.2560.1400" timestamp="1613715439149" />
     <state x="509" y="180" key="SettingsEditor/0.23.1680.954@0.23.1680.954" timestamp="1613761346509" />
     <state x="582" y="185" key="SettingsEditor/0.23.1920.981@0.23.1920.981" timestamp="1613676847009" />
+    <state x="976" y="348" key="com.intellij.ide.util.TipDialog" timestamp="1614107411645">
+      <screen x="0" y="23" width="1920" height="981" />
+    </state>
+    <state x="976" y="348" key="com.intellij.ide.util.TipDialog/0.23.1920.981@0.23.1920.981" timestamp="1614107411645" />
     <state x="1007" y="279" width="670" height="725" key="search.everywhere.popup" timestamp="1613938605460">
       <screen x="0" y="23" width="1920" height="981" />
     </state>

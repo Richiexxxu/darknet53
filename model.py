@@ -74,4 +74,4 @@ class Darknet53(nn.Module):
 
 def darknet53(num_classes):
     return Darknet53(DarkResidualBlock, num_classes)
-model = darknet53(1000)
+# model = darknet53(1000)
