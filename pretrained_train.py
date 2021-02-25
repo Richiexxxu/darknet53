@@ -2,6 +2,7 @@ import os
 import argparse
 import time
 import shutil
+import json
 
 import torch
 from torch.utils.data import DataLoader
@@ -13,18 +14,24 @@ from model import darknet53
 
 
 parser = argparse.ArgumentParser(description='Darknet53 ImageNet Training')
-parser.add_argument('--data', metavar='DIR', help='path to datset')
+parser.add_argument('--data', default='dataset',metavar='DIR', help='path to datset')
 parser.add_argument('--resume', default='', type=str, metavar='Path', help='path to latest checkpoint (default:none)')
 parser.add_argument('--epochs', default=90, type=int, metavar='N', help='number of total epochs to run')
-parser.add_argument('--start-epoch')
-parser.add_argument('--workers')
-parser.add_argument('--lr')
-parser.add_argument('--momentum')
-parser.add_argument('--wd')
-parser.add_argument('--b')
-parser.add_argument('--p')
-parser.add_argument('--gpu')
-parser.add_argument('--nclasses')
+parser.add_argument('--start-epoch', default=0, type=int, metavar='N', help='manual epoch number (useful on restarts)')
+parser.add_argument('--workers', default=4, type=int, metavar='N', help='number of data loading workers （default:4)')
+parser.add_argument('--lr', '--learning-rate', default=0.1, type=float, metavar='LR', help='initial learning rate', dest='lr')
+parser.add_argument('--momentum', default=0.9, type=float, metavar='M', help='momentum')
+parser.add_argument('--weight-decay', default=1e-4, type=float,
+                    metavar='W', help='weight decay (default: 1e -4)',
+                    dest='weight_decay')
+parser.add_argument('--batch-size', default=32, type=int, metavar='N',
+                    help='mini-batch size (default;32), this is the total'
+                         'batch size of all GPUs on the current node when '
+                         'using Data Parallel or Distributed Data Parallel')
+parser.add_argument('--print-freq', default=10, type=int,
+                    metavar='N', help='print frequency (defaule : 10)')
+parser.add_argument('--gpu', default=0, type=int, help='GPU id to use.')
+# parser.add_argument('--nclasses')
 
 
 
@@ -36,22 +43,9 @@ def main():
 
     model = darknet53(num_classes=1000) # change 1000 to num_classes, put the 1000 classes into parser.add_argument default
 
-    # load pretrain weights
-    model_weight_path = "./..."  # Todo: change weight path here
-    assert os.path.exists(model_weight_path), "file {} does not exist.".format(model_weight_path)
-    parameter_weight = torch.load(model_weight_path, map_location=args.gpu)['best_dict']
-    model.load_state_dict(parameter_weight)
-
-    #change fc layer structure
-    in_channel = model.fc.in_features
-    model.fc = nn.Linear(in_channel, args.nclasses)
-    # model.to(args.gpu)
-
-
-
-    if args.gpu is not None:
-        torch.cuda.set_device(args.gpu)
-        model.cuda(args.gpu)
+    # if args.gpu is not None:
+    #     torch.cuda.set_device(args.gpu)
+    #     model.cuda(args.gpu)
 
     # define loss function (criterion) and optimizer
     criterion = nn.CrossEntropyLoss().cuda(args.gpu)
@@ -76,73 +70,97 @@ def main():
         else:
             print("=> no checkpoint found ad '{}'".format(args.resume))
 
-        # Data loading code
-        traindir = os.path.join(args.data, 'train')
-        valdir =  os.path.join(args.data, 'val')
+    # Data loading code
+    traindir = os.path.join(args.data, 'train')
+    valdir =  os.path.join(args.data, 'val')
 
-        normalize = transforms.Normalize(mean=[0.485, 0.456, 0.106],
-                                         std=[0.229, 0.224, 0.225])
+    normalize = transforms.Normalize(mean=[0.485, 0.456, 0.106],
+                                     std=[0.229, 0.224, 0.225])
 
-        train_dataset = datasets.ImageFolder(
-            traindir,
+    train_dataset = datasets.ImageFolder(
+        traindir,
+        transforms.Compose([
+            transforms.RandomResizedCrop(224),
+            transforms.RandomHorizontalFlip(),
+            transforms.ToTensor(),
+            normalize
+        ]))
+
+    # generate label  .txt
+    train_num = len(train_dataset)
+    cla_list = train_dataset.class_to_idx
+    cla_dict = dict((val, key) for key, val in cla_list.items())
+    # write dict into json file
+    json_str = json.dumps(cla_dict, indent=4)
+    with open('class_indices.json', 'w') as json_file:
+        json_file.write(json_str)
+
+
+    # load pretrain weights
+    model_weight_path = "model_best.pth.tar"
+    assert os.path.exists(model_weight_path), "file {} does not exist.".format(model_weight_path)
+    pretrained_weight_model = torch.load(model_weight_path, map_location=torch.cuda.set_device(args.gpu))['state_dict']
+    model.load_state_dict(pretrained_weight_model)
+
+
+    # change fc layer structure
+    in_channel = model.fc.in_features
+    model.fc = nn.Linear(in_channel, train_num)
+    # model.cuda(args.gpu)
+    torch.cuda.set_device(args.gpu)
+    model.cuda(args.gpu)
+
+    train_loader = torch.utils.data.DataLoader(
+        train_dataset, batch_size=args.batch_size, shuffle = True,
+        num_workers=args.workers, pin_memory=True
+    )
+
+    val_loader = torch.utils.data.DataLoader(
+        datasets.ImageFolder(
+            valdir,
             transforms.Compose([
-                transforms.RandomResizedCrop(224),
-                transforms.RandomHorizontalFlip(),
+                transforms.Resize(256),
+                transforms.CenterCrop(224),
                 transforms.ToTensor(),
                 normalize
-            ]))
+            ])),
+        batch_size=args.batch_size, shuffle=True,
+        num_workers=args.workers, pin_memory=True
+    )
+    best_acc1= 0
 
-        train_loader = torch.utils.data.DataLoader(
-            train_dataset, batch_size=args.batch_size, shuffle = True,
-            num_workers=args.workers, pin_memory=True
+    for epoch in range(args.start_epoch, args.epochs):
+
+        # adjust learning rate
+        adjust_learning_rate(optimizer, epoch, args)
+
+        # train for one epoch
+
+        train(train_loader, model, criterion, optimizer, epoch, args)
+
+        # evaluate on validation set
+        acc1 = validate(val_loader, model, criterion, args)
+
+
+        # remember best acc@1 and save checkpoint
+        is_best = acc1 > best_acc1
+        best_acc1 = max(acc1, best_acc1)
+
+        save_checkpoint(
+            {
+                'epoch' : epoch + 1,
+                'state_dict': model.state_dict(),
+                'best_acc1' : best_acc1,
+                'optimizer' : optimizer.state_dict(),
+            }, is_best
         )
-
-        val_loader = torch.utils.data.DataLoader(
-            datasets.ImageFolder(
-                valdir,
-                transforms.Compose([
-                    transforms.Resize(256),
-                    transforms.CenterCrop(224),
-                    transforms.ToTensor(),
-                    normalize
-                ])),
-            batch_size=args.batch_size, shuffle=True,
-            num_workers=args.workers, pin_memory=True
-        )
-        best_acc1= 0
-
-        for epoch in range(args.start_epoch, args.epochs):
-
-            # adjust learning rate
-            adjust_learning_rate(optimizer, epoch, args)
-
-            # train for one epoch
-
-            train(train_loader, model, criterion, args)
-
-            # evaluate on validation set
-            acc1 = validate(val_loader, model, criterion, args)
-
-
-            # remember best acc@1 and save checkpoint
-            is_best = acc1 > best_acc1
-            best_acc1 = next(acc1, best_acc1)
-
-            save_checkpoint(
-                {
-                    'epoch' : epoch + 1,
-                    'state_dict': model.state_dict(),
-                    'best_acc1' : best_acc1,
-                    'optimizer' : optimizer.state_dict(),
-                }, is_best
-            )
 
 
 
 def save_checkpoint(state, is_best, filename='checkpoint.pth.tar'):
     torch.save(state, filename)
     if is_best:
-        shutil.copy(filename, 'model_best.pth.tar')
+        shutil.copy(filename, 'new_model_best.pth.tar')
 
 
 
@@ -158,7 +176,7 @@ def train(train_loader, model ,criterion, optimizer, epoch, args):
 
     end = time.time()
 
-    for i, (intput, target) in enumerate(train_loader):
+    for i, (input, target) in enumerate(train_loader):
         # measure data loading time
         data_time.update(time.time() - end)
 
@@ -186,14 +204,15 @@ def train(train_loader, model ,criterion, optimizer, epoch, args):
         batch_time.update(time.time() - end)
         end = time.time()
 
-        print('Epoch: [{0}][{1}/{2}]\t'
-              'Time {batch_time.val:.3f} ({batch_time.avg:.3f})\t'
-              'Data {data_time.val:.3f} ({data_time.avg:.3f})\t'
-              'Loss {loss.val:.4f} ({loss.avg:.4f})\t'
-              'Acc@1 {top1.val:.3f} ({top1.avg:.3f})\t'
-              'Acc@5 {top5.val:.3f} ({top5.avg:.3f})'.format(
-            epoch, i, len(train_loader), batch_time=batch_time,
-            data_time=data_time, loss=losses, top1=top1, top5=top5))
+        if i % args.print_freq ==0:
+            print('Epoch: [{0}][{1}/{2}]\t'
+                  'Time {batch_time.val:.3f} ({batch_time.avg:.3f})\t'
+                  'Data {data_time.val:.3f} ({data_time.avg:.3f})\t'
+                  'Loss {loss.val:.4f} ({loss.avg:.4f})\t'
+                  'Acc@1 {top1.val:.3f} ({top1.avg:.3f})\t'
+                  'Acc@5 {top5.val:.3f} ({top5.avg:.3f})'.format(
+                epoch, i, len(train_loader), batch_time=batch_time,
+                data_time=data_time, loss=losses, top1=top1, top5=top5))
 
 def accuracy(output, target, topk = (1,)):
     """ Computes the accuracy over the k top predictions for the specified values of k """
@@ -246,8 +265,8 @@ def validate(val_loader, model, criterion, args):
             # measure accuracy and record loss:
             acc1, acc5 = accuracy(output, target, topk=(1, 5))
             losses.update(loss.item(), input.size(0))
-            top1.update(acc1, input.size(0))
-            top5.update(acc5, input.size(0))
+            top1.update(acc1[0], input.size(0))
+            top5.update(acc5[0], input.size(0))
 
 
             # measure elapsed time
@@ -285,3 +304,6 @@ class AverageMeter(object):
         self.sum += val * n
         self.count += n
         self.avg = self.sum / self.count
+
+if __name__ == '__main__':
+    main()
